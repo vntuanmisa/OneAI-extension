@@ -39,6 +39,17 @@ function validatePeriod(period) {
 // Health check
 app.get('/api/health', (_req, res) => res.status(200).json({ ok: true }));
 
+// Debug endpoint - kiểm tra env
+app.get('/api/debug', (_req, res) => {
+  const hasSecret = !!process.env.API_SECRET_KEY;
+  const secretLength = process.env.API_SECRET_KEY ? process.env.API_SECRET_KEY.length : 0;
+  res.status(200).json({ 
+    hasSecret, 
+    secretLength,
+    env: process.env.NODE_ENV || 'unknown'
+  });
+});
+
 // Routes
 // GET /api/data/:employeeCode?period=YYYY-MM
 app.get('/api/data/:employeeCode', ensureAuth, async (req, res) => {

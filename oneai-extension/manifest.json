@@ -2,9 +2,9 @@
   "manifest_version": 3,
   "name": "OneAI Usage Tracker",
   "short_name": "OneAI Tracker",
-  "version": "1.0.0",
-  "version_name": "1.0.0 (Stable)",
-  "description": "Theo dõi và thống kê số lần sử dụng OneAI (đã bắt đầu trả lời) theo nhân viên và ngày.",
+  "version": "1.1.0",
+  "version_name": "1.1.0 (API Sync)",
+  "description": "Theo dõi và thống kê số lần sử dụng OneAI với tính năng đồng bộ dữ liệu giữa các máy tính.",
   "permissions": [
     "storage",
     "webRequest",
