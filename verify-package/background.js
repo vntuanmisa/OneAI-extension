@@ -6,6 +6,7 @@
 //   Step 2: catch /log/monitor with CustomType:3 & StepName:"Client_ReveiceTokenToGenerate"
 //            -> read messageId from monitor body, take temp entry and write to history (no dedupe checks), then clear temp
 
+import { API_BASE_URL, API_SECRET_KEY } from './config.js';
 const ONEAI_HOST = 'misajsc.amis.vn';
 const ONEAI_PATH_SEGMENT = '/oneai/';
 const ONEAI_CHAT_URL = 'https://misajsc.amis.vn/oneai/chat';
@@ -316,6 +317,79 @@ async function appendHistory(employeeCode, dateKey, record) {
   await chrome.storage.local.set({ [LOCAL_KEYS.history]: history });
 }
 
+// ===== Đồng bộ server: helpers =====
+async function fetchDataFromServer(employeeCode, period) {
+  try {
+    const url = `${API_BASE_URL}/${encodeURIComponent(employeeCode)}?period=${encodeURIComponent(period)}`;
+    const res = await fetch(url, { headers: { 'X-Auth-Token': API_SECRET_KEY } });
+    if (res.status === 200) return await res.json();
+    if (res.status === 404) return null; // không có dữ liệu
+    return null;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function postDataToServer(employeeCode, period, data) {
+  try {
+    const url = `${API_BASE_URL}/${encodeURIComponent(employeeCode)}?period=${encodeURIComponent(period)}`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Auth-Token': API_SECRET_KEY },
+      body: JSON.stringify(data || {})
+    });
+    return res.ok;
+  } catch (_) {
+    return false;
+  }
+}
+
+async function mergeMonthlyDataToLocal(employeeCode, period, remoteData) {
+  if (!remoteData || !employeeCode || !period) return;
+  const store = await chrome.storage.local.get([LOCAL_KEYS.stats, LOCAL_KEYS.history]);
+  const stats = store[LOCAL_KEYS.stats] || {};
+  const history = store[LOCAL_KEYS.history] || {};
+  const userStats = stats[employeeCode] || {};
+  const userHist = history[employeeCode] || {};
+  const prefix = `${period}-`;
+  const remoteStats = (remoteData.stats || {});
+  const remoteHist = (remoteData.history || {});
+  for (const [dayKey, cnt] of Object.entries(remoteStats)) {
+    if (String(dayKey).startsWith(prefix)) {
+      const localCnt = Number(userStats[dayKey] || 0);
+      userStats[dayKey] = Math.max(localCnt, Number(cnt || 0));
+    }
+  }
+  for (const [dayKey, list] of Object.entries(remoteHist)) {
+    if (String(dayKey).startsWith(prefix)) {
+      const localList = Array.isArray(userHist[dayKey]) ? userHist[dayKey] : [];
+      const remoteList = Array.isArray(list) ? list : [];
+      userHist[dayKey] = [...localList, ...remoteList];
+    }
+  }
+  stats[employeeCode] = userStats;
+  history[employeeCode] = userHist;
+  await chrome.storage.local.set({ [LOCAL_KEYS.stats]: stats, [LOCAL_KEYS.history]: history });
+}
+
+async function dumpMonthlyDataFromLocal(employeeCode, period) {
+  const store = await chrome.storage.local.get([LOCAL_KEYS.stats, LOCAL_KEYS.history]);
+  const stats = store[LOCAL_KEYS.stats] || {};
+  const history = store[LOCAL_KEYS.history] || {};
+  const userStats = stats[employeeCode] || {};
+  const userHist = history[employeeCode] || {};
+  const prefix = `${period}-`;
+  const outStats = {};
+  const outHist = {};
+  for (const [k, v] of Object.entries(userStats)) {
+    if (String(k).startsWith(prefix)) outStats[k] = v;
+  }
+  for (const [k, v] of Object.entries(userHist)) {
+    if (String(k).startsWith(prefix)) outHist[k] = v;
+  }
+  return { stats: outStats, history: outHist };
+}
+
 async function hasHistoryRecord(employeeCode, dateKey, messageId, modelCode) {
   const { [LOCAL_KEYS.history]: history = {} } = await chrome.storage.local.get(LOCAL_KEYS.history);
   const list = history?.[employeeCode]?.[dateKey] || [];
@@ -472,6 +546,14 @@ chrome.runtime.onInstalled.addListener(() => {
   applyDefaultActionIcon();
   // Initialize badge for last known user
   getCurrentEmployeeOrLast().then(emp => { if (emp) updateBadgeFor(emp); });
+  // Đồng bộ về local trên cài đặt mới: lấy tháng hiện tại
+  getCurrentEmployeeOrLast().then(async (emp) => {
+    if (!emp) return;
+    const now = new Date();
+    const period = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+    const remote = await fetchDataFromServer(emp, period);
+    if (remote) await mergeMonthlyDataToLocal(emp, period, remote);
+  });
 });
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
@@ -486,6 +568,14 @@ chrome.runtime.onStartup.addListener(() => {
   getCurrentEmployeeOrLast().then(emp => { if (emp) updateBadgeFor(emp); });
   // Ensure the minute alarm is active after startup
   chrome.alarms.create('minuteReminder', { periodInMinutes: 1 });
+  // Đồng bộ về local khi khởi động: tháng hiện tại
+  getCurrentEmployeeOrLast().then(async (emp) => {
+    if (!emp) return;
+    const now = new Date();
+    const period = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+    const remote = await fetchDataFromServer(emp, period);
+    if (remote) await mergeMonthlyDataToLocal(emp, period, remote);
+  });
 });
 
 async function applyDefaultActionIcon() {
@@ -559,6 +649,13 @@ chrome.webRequest.onBeforeRequest.addListener(
               modelCode: pending.modelCode || ''
             });
             await updateBadgeFor(pending.employeeCode);
+            // Đẩy đồng bộ tháng hiện tại sau khi ghi nhận thành công
+            try {
+              const now = new Date();
+              const period = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+              const dump = await dumpMonthlyDataFromLocal(pending.employeeCode, period);
+              await postDataToServer(pending.employeeCode, period, dump);
+            } catch (_) {}
             const settings = await getSettings();
             if (settings.alertsEnabled && newCount === settings.dailyGoal) {
               try {
@@ -583,6 +680,28 @@ chrome.webRequest.onBeforeRequest.addListener(
   },
   ['requestBody']
 );
+
+// Lắng nghe yêu cầu lazy-load tháng từ popup
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  (async () => {
+    try {
+      if (message && message.type === 'sync:fetchPeriod') {
+        const employeeCode = String(message.employeeCode || '');
+        const period = String(message.period || '');
+        if (!employeeCode || !period) return sendResponse({ ok: false, error: 'invalid_params' });
+        const remote = await fetchDataFromServer(employeeCode, period);
+        if (remote) {
+          await mergeMonthlyDataToLocal(employeeCode, period, remote);
+          return sendResponse({ ok: true, found: true });
+        }
+        return sendResponse({ ok: true, found: false });
+      }
+    } catch (e) {
+      return sendResponse({ ok: false, error: 'exception' });
+    }
+  })();
+  return true;
+});
 
 
 

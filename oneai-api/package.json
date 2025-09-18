@@ -1,0 +1,17 @@
+{
+  "name": "oneai-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "main": "api/index.js",
+  "scripts": {
+    "dev": "vercel dev",
+    "start": "node api/index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "serverless-http": "^3.2.0"
+  }
+}
+
+

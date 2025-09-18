@@ -52,6 +52,23 @@ async function renderCalendar(year, monthIndex) {
   document.getElementById('monthLabel').textContent = `${monthText.toUpperCase()} ${yearText}`;
   document.getElementById('employee').textContent = employeeCode ? `Mã NV: ${employeeCode}` : '';
 
+  // Lazy load dữ liệu tháng nếu chưa có
+  if (employeeCode) {
+    const period = `${monthDate.getFullYear()}-${String(monthDate.getMonth()+1).padStart(2,'0')}`;
+    const store = await chrome.storage.local.get([LOCAL_KEYS.stats, LOCAL_KEYS.history]);
+    const stats = store[LOCAL_KEYS.stats] || {};
+    const history = store[LOCAL_KEYS.history] || {};
+    const userStats = stats[employeeCode] || {};
+    const userHist = history[employeeCode] || {};
+    const prefix = `${period}-`;
+    const hasAny = Object.keys(userStats).some(k => String(k).startsWith(prefix)) || Object.keys(userHist).some(k => String(k).startsWith(prefix));
+    if (!hasAny) {
+      try {
+        await chrome.runtime.sendMessage({ type: 'sync:fetchPeriod', employeeCode, period });
+      } catch (_) {}
+    }
+  }
+
   // Weekday headers
   for (const w of weekdayLabels()) {
     const el = document.createElement('div');
