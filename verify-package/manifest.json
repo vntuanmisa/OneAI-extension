@@ -1,0 +1,42 @@
+{
+  "manifest_version": 3,
+  "name": "OneAI Usage Tracker",
+  "short_name": "OneAI Tracker",
+  "version": "1.0.0",
+  "version_name": "1.0.0 (Stable)",
+  "description": "Theo dõi và thống kê số lần sử dụng OneAI (đã bắt đầu trả lời) theo nhân viên và ngày.",
+  "permissions": [
+    "storage",
+    "webRequest",
+    "alarms",
+    "notifications",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://misajsc.amis.vn/*"
+  ],
+  "minimum_chrome_version": "88",
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "OneAI Usage Tracker",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "options_page": "options.html",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
+
+

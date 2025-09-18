@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OneAI Usage Tracker</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <div class="header">
+      <div class="title">
+        <div class="month-row">
+          <div id="monthLabel" class="month-title"></div>
+          <button id="clearMonthBtn" class="icon-btn danger small" title="Xóa lịch sử tháng này" style="display:none;">Xóa lịch sử</button>
+        </div>
+        <div id="employee" class="employee-label"></div>
+      </div>
+      <div class="toolbar">
+        <button id="prevMonth" class="icon-btn" title="Tháng trước">◀</button>
+        <button id="todayBtn" class="icon-btn" title="Về tháng hiện tại">Tháng này</button>
+        <button id="nextMonth" class="icon-btn" title="Tháng sau">▶</button>
+      </div>
+    </div>
+
+    <div class="legend">
+      <span class="dot goal"></span> Đạt chỉ tiêu
+      <span class="dot below"></span> Chưa đạt
+    </div>
+
+    <div id="calendar" class="calendar"></div>
+
+    <div id="historyPanel" class="history">
+      <div class="history-header">
+        <span id="historyDateLabel">Lịch sử</span>
+        <button id="exportBtn" class="export-btn" title="Xuất khẩu lịch sử ngày này">📥 Xuất khẩu</button>
+      </div>
+      <div id="historyList"></div>
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+  </html>
+
+
