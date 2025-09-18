@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OneAI API Test</title>
+  <style>
+    body { font-family: Segoe UI, system-ui, sans-serif; margin: 20px; }
+    .row { display: flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+    input, select, textarea { padding: 8px; font-size: 14px; }
+    input[type="text"], textarea { width: 320px; }
+    textarea { height: 140px; }
+    button { padding: 8px 14px; cursor: pointer; }
+    .grp { border: 1px solid #ddd; padding: 12px; border-radius: 8px; margin-bottom: 16px; }
+    .lbl { width: 140px; display: inline-block; font-weight: 600; }
+    pre { background: #f7f7f7; padding: 12px; border-radius: 6px; overflow: auto; }
+  </style>
+  <script>
+    async function doGet() {
+      const base = document.getElementById('base').value.replace(/\/$/, '');
+      const emp = document.getElementById('emp').value.trim();
+      const period = document.getElementById('period').value.trim();
+      const token = document.getElementById('token').value.trim();
+      const url = `${base}/${encodeURIComponent(emp)}?period=${encodeURIComponent(period)}`;
+      const res = await fetch(url, { headers: { 'X-Auth-Token': token } });
+      const text = await res.text();
+      document.getElementById('out').textContent = `GET ${url}\nStatus: ${res.status}\n\n${text}`;
+    }
+    async function doPost() {
+      const base = document.getElementById('base').value.replace(/\/$/, '');
+      const emp = document.getElementById('emp').value.trim();
+      const period = document.getElementById('period').value.trim();
+      const token = document.getElementById('token').value.trim();
+      const body = document.getElementById('body').value;
+      let data;
+      try { data = JSON.parse(body); } catch (e) { alert('Body không phải JSON hợp lệ'); return; }
+      const url = `${base}/${encodeURIComponent(emp)}?period=${encodeURIComponent(period)}`;
+      const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Auth-Token': token }, body: JSON.stringify(data) });
+      const text = await res.text();
+      document.getElementById('out').textContent = `POST ${url}\nStatus: ${res.status}\n\n${text}`;
+    }
+    function fillSample() {
+      const now = new Date();
+      const ym = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+      document.getElementById('period').value = ym;
+      document.getElementById('body').value = JSON.stringify({
+        stats: { [`${ym}-01`]: 2 },
+        history: { [`${ym}-01`]: [{ timestamp: Date.now(), message: 'demo', modelCode: 'gpt' }] }
+      }, null, 2);
+    }
+    window.addEventListener('DOMContentLoaded', fillSample);
+  </script>
+  </head>
+<body>
+  <h2>OneAI API Test</h2>
+  <div class="grp">
+    <div class="row"><span class="lbl">API Base</span><input id="base" type="text" value="/api/data" /></div>
+    <div class="row"><span class="lbl">Employee Code</span><input id="emp" type="text" placeholder="NV123" /></div>
+    <div class="row"><span class="lbl">Period</span><input id="period" type="text" placeholder="YYYY-MM" /></div>
+    <div class="row"><span class="lbl">X-Auth-Token</span><input id="token" type="text" placeholder="API_SECRET_KEY" /></div>
+  </div>
+  <div class="grp">
+    <div class="row"><span class="lbl">POST Body</span><textarea id="body"></textarea></div>
+    <div class="row">
+      <button onclick="doGet()">GET</button>
+      <button onclick="doPost()">POST</button>
+    </div>
+  </div>
+  <pre id="out"></pre>
+</body>
+</html>
+
+

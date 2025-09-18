@@ -1,9 +1,8 @@
-// Express serverless API for Vercel
+// Express API for Vercel
 // - Lưu và truy xuất dữ liệu JSON theo {employeeCode}/{YYYY-MM}.json dưới /tmp
 // - Xác thực bằng header X-Auth-Token so với biến môi trường API_SECRET_KEY
 
 const express = require('express');
-const serverless = require('serverless-http');
 const fs = require('fs');
 const path = require('path');
 
@@ -36,6 +35,9 @@ function getFilePath(employeeCode, period) {
 function validatePeriod(period) {
   return typeof period === 'string' && PERIOD_REGEX.test(period);
 }
+
+// Health check
+app.get('/api/health', (_req, res) => res.status(200).json({ ok: true }));
 
 // Routes
 // GET /api/data/:employeeCode?period=YYYY-MM
@@ -92,6 +94,7 @@ app.post('/api/data/:employeeCode', ensureAuth, async (req, res) => {
   }
 });
 
-module.exports = serverless(app);
+// Export Express app directly for @vercel/node
+module.exports = app;
 
 
