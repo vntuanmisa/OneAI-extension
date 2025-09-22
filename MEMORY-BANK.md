@@ -1,20 +1,36 @@
-## OneAI Usage Tracker — Memory Bank (Tài liệu kỹ thuật cô đọng)
+# OneAI Usage Tracker — Memory Bank (Tài liệu kỹ thuật)
 
-Mục tiêu: Nắm nhanh kiến trúc, luồng xử lý, lược đồ lưu trữ, UI và checklist kiểm thử/đóng gói của tiện ích Chrome MV3 theo dõi việc sử dụng OneAI tại `https://misajsc.amis.vn/oneai`.
+Mục tiêu: Nắm nhanh kiến trúc, luồng xử lý, lược đồ lưu trữ, UI và đồng bộ API của tiện ích Chrome MV3 theo dõi việc sử dụng OneAI tại `https://misajsc.amis.vn/oneai`.
 
-### 1) Tổng quan kiến trúc
-- Manifest V3, service worker: `background.js`
-- Popup: `popup.html`, `popup.css`, `popup.js`
-- Options: `options.html`, `options.js`
-- Biểu tượng: `icons/`
+## 1) Tổng quan kiến trúc
 
-#### Sơ đồ kiến trúc (Mermaid)
+### Cấu trúc project
+```
+OneAI-extension/
+├── oneai-api/                    # API serverless Vercel
+│   ├── api/index.js              # Express endpoints với CORS
+│   ├── index.html                # Trang test API
+│   ├── package.json              # Dependencies cho API
+│   └── vercel.json               # Cấu hình Vercel deployment
+├── oneai-extension/              # Chrome Extension (bản chính)
+│   ├── background.js             # Service worker với đồng bộ API
+│   ├── config.js                 # Cấu hình API endpoint
+│   ├── manifest.json             # v1.1.0 với tính năng API sync
+│   ├── popup.html/css/js         # UI calendar với lazy loading
+│   ├── options.html/js           # Cài đặt
+│   ├── icons/                    # Icons cho extension
+│   └── README.md                 # Hướng dẫn chi tiết
+└── oneai-extension-v1.1.2-final.zip  # Build cuối cùng
+```
+
+### Kiến trúc hệ thống
 ```mermaid
 flowchart LR
   subgraph Browser[Chrome Browser]
     SW[Service Worker\nbackground.js]
     POP[Popup UI\npopup.html/js/css]
     OPT[Options UI\noptions.html/js]
+    CFG[config.js\nAPI settings]
   end
 
   subgraph Storage
@@ -22,19 +38,28 @@ flowchart LR
     S[chrome.storage.session\npendingMap, successStarted, monitorProcessed]
   end
 
+  subgraph API[Vercel API]
+    APIE[/api/data/:employeeCode\nGET/POST với CORS]
+    APIH[/api/health\nHealth check]
+    APID[/api/debug\nEnvironment debug]
+  end
+
   subgraph OneAI
     OA[misajsc.amis.vn/oneai]
   end
 
   POP <-- read/paint --> L
+  POP -- lazy load --> SW
   OPT <-- read/write --> L
   SW <-- read/write --> L
   SW <-- read/write --> S
   SW == webRequest onBeforeRequest ==> OA
+  SW == fetch API sync ==> APIE
   SW == alarms/notifications ==> Browser
+  CFG -- config --> SW
 ```
 
-Quyền (manifest):
+### Quyền (manifest)
 - `storage` (lưu cài đặt, thống kê, lịch sử)
 - `webRequest` (bắt nội dung request và body)
 - `alarms` (nhắc mỗi phút)
@@ -42,137 +67,304 @@ Quyền (manifest):
 - `tabs` (mở tab OneAI khi bấm thông báo)
 - `host_permissions`: `https://misajsc.amis.vn/*`
 
-Phiên bản Chrome tối thiểu: 88. Action có popup, options page có sẵn.
+## 2) Luồng ghi nhận "một lần sử dụng thành công" (2 bước + API sync)
 
-### 2) Luồng ghi nhận “một lần sử dụng thành công” (2 bước)
-1. Bắt request gửi câu hỏi: `.../oneai/.../chats/streaming`
-   - Trích: `employeeCode`, `answerMessageId` (ưu tiên cho streaming), `messageId` (nếu có), `message`, `modelCode`.
-   - Áp dụng lọc hợp lệ (xem mục 4). Nếu hợp lệ → lưu tạm entry (session) theo cặp ID (gộp `answerMessageId` và/hoặc `messageId`). Đồng thời cập nhật `currentEmployeeCode`.
+### Bước 1: Bắt request gửi câu hỏi
+- Endpoint: `.../oneai/.../chats/streaming`
+- Trích xuất: `employeeCode`, `answerMessageId`, `messageId`, `message`, `modelCode`
+- Áp dụng lọc hợp lệ → lưu tạm entry (session) theo groupKey
+- Cập nhật `currentEmployeeCode`
 
-2. Bắt request xác nhận: `.../api/system/*/log/monitor` với `CustomType: 3` và `StepName: "Client_ReveiceTokenToGenerate"`
-   - Đọc `messageId` từ body monitor.
-   - Chống xử lý lặp bằng map `monitorProcessed` (TTL 10 phút).
-   - Tiêu thụ toàn bộ pending liên quan (từ session/memory), tăng thống kê theo ngày, ghi lịch sử chi tiết và cập nhật badge.
+### Bước 2: Bắt request xác nhận
+- Endpoint: `.../api/system/*/log/monitor`
+- Điều kiện: `CustomType: 3` và `StepName: "Client_ReveiceTokenToGenerate"`
+- Chống xử lý lặp bằng `monitorProcessed` (TTL 10 phút)
+- Tiêu thụ pending, tăng stats, ghi history, cập nhật badge
 
-Cho phép “model đến muộn” trong 10 phút kể từ khi xác nhận (TTL `SUCCESS_TTL_MS`).
+### Bước 3: Đồng bộ API (Mới v1.1.0+)
+- **Sau ghi nhận thành công**: Tự động POST dữ liệu tháng hiện tại lên server
+- **Format gửi**: `{ stats: {YYYY-MM-DD: number}, history: {YYYY-MM-DD: Array<...>} }`
 
-#### Sequence (Mermaid)
+## 3) Đồng bộ dữ liệu với API
+
+### API Endpoints
+- **Base URL**: `https://one-ai-extension.vercel.app/api/data`
+- **Authentication**: Header `X-Auth-Token: b75d8f44f4d54d1abf1d8fc3d1e0b9a3`
+- **GET** `/api/data/:employeeCode?period=YYYY-MM`: Lấy dữ liệu tháng
+- **POST** `/api/data/:employeeCode?period=YYYY-MM`: Lưu dữ liệu tháng
+- **CORS**: Đã cấu hình `Access-Control-Allow-Origin: *`
+
+### Luồng đồng bộ
 ```mermaid
 sequenceDiagram
-  participant UA as User Action (Ask)
-  participant B as Browser
-  participant SW as background.js
-  participant OA as OneAI Server
-  participant SESS as storage.session
-  participant LOC as storage.local
+  participant E as Extension
+  participant API as Vercel API
+  participant F as File System
 
-  UA->>B: Gửi câu hỏi trên trang OneAI
-  B->>OA: POST /oneai/.../chats/streaming (employeeCode, answerMessageId, messageId?, message, modelCode)
-  Note right of OA: Server xử lý streaming
-  B-->>SW: webRequest.onBeforeRequest(streaming)
-  SW->>SW: Lọc hợp lệ (wordMinThreshold + blockedKeywords)
-  alt Hợp lệ
-    SW->>SESS: pendingMap[groupKey] = entry
-    SW->>LOC: currentEmployeeCode = employeeCode
-    SW->>B: Cập nhật badge
-  else Không hợp lệ
-    SW->>SW: Bỏ qua
-  end
+  Note over E,F: Khởi động Extension
+  E->>API: GET /api/data/NV123?period=2025-09
+  API->>F: Đọc /tmp/oneai_data/NV123/2025-09.json
+  F-->>API: JSON data hoặc 404
+  API-->>E: Merge với local storage
 
-  OA-->>B: Xác nhận bắt đầu sinh (qua log monitor)
-  B->>OA: POST /api/system/.../log/monitor (CustomType:3, StepName: Client_ReveiceTokenToGenerate, messageId)
-  B-->>SW: webRequest.onBeforeRequest(monitor)
-  SW->>SESS: Kiểm tra monitorProcessed[messageId]
-  alt Chưa xử lý
-    SW->>SESS: Đánh dấu monitorProcessed[messageId]
-    SW->>SESS: Lấy toàn bộ pending theo answerId/messageId
-    SW->>LOC: Tăng stats[employeeCode][yyyy-mm-dd]
-    SW->>LOC: Ghi history (timestamp, messageId, message, modelCode)
-    SW->>B: Cập nhật badge, có thể gửi notification nếu đạt dailyGoal
-  else Đã xử lý
-    SW->>SW: Bỏ qua (chống đếm lặp)
-  end
+  Note over E,F: Sau khi sử dụng OneAI
+  E->>E: Ghi nhận thành công → cập nhật local
+  E->>API: POST /api/data/NV123?period=2025-09
+  API->>F: Ghi đè file với dữ liệu mới
+  F-->>API: Success
+  API-->>E: {status: "success"}
+
+  Note over E,F: Lazy Loading tháng cũ
+  E->>API: GET /api/data/NV123?period=2025-08
+  API->>F: Đọc file tháng 8
+  F-->>API: Data tháng 8
+  API-->>E: Hiển thị calendar tháng 8
 ```
 
-### 3) Lược đồ lưu trữ
-- `chrome.storage.local`
-  - `settings`: cấu hình người dùng (xem mục 4)
-  - `stats`: { [employeeCode]: { [yyyy-mm-dd]: number } }
-  - `history`: { [employeeCode]: { [yyyy-mm-dd]: Array<{ timestamp, messageId, message, modelCode }> } }
-  - `currentEmployeeCode`: string | null
+### Các trigger đồng bộ
+1. **onInstalled/onStartup**: Fetch tháng hiện tại từ server về local
+2. **Sau ghi nhận thành công**: POST toàn bộ dữ liệu tháng hiện tại lên server
+3. **Lazy loading**: Khi chuyển tháng trong popup, fetch nếu local chưa có
 
-- `chrome.storage.session`
-  - `pendingMap`: { [groupKey]: Array<{ employeeCode, createdAt, ids: { answerId?, requestId? }, message?, modelCode? }> }
-  - `successStarted`: { [messageId]: number }  // timestamp xác nhận bắt đầu sinh
-  - `monitorProcessed`: { [messageId]: number } // chống xử lý lặp monitor
+## 4) Lược đồ lưu trữ
 
-Ghi chú: Ngoài session, còn giữ một buffer in-memory `memoryPending` để gom nhóm nhanh và tránh race điều kiện.
+### Local Storage
+```javascript
+// chrome.storage.local
+{
+  settings: {
+    wordMinThreshold: 5,
+    blockedKeywords: ['cảm ơn', 'xin chào', 'tạm biệt'],
+    alertsEnabled: true,
+    dailyGoal: 6,
+    reminderTimes: ['10:00', '14:00', '16:00', '17:00']
+  },
+  stats: {
+    "NV123": {
+      "2025-09-18": 5,
+      "2025-09-17": 3
+    }
+  },
+  history: {
+    "NV123": {
+      "2025-09-18": [
+        {
+          timestamp: 1726653600000,
+          messageId: "msg123",
+          message: "Câu hỏi demo",
+          modelCode: "gpt"
+        }
+      ]
+    }
+  },
+  currentEmployeeCode: "NV123"
+}
+```
 
-### 4) Luật lọc hợp lệ câu hỏi
-Mặc định một câu hỏi bị coi là KHÔNG hợp lệ chỉ khi đồng thời:
+### Session Storage
+```javascript
+// chrome.storage.session
+{
+  pendingMap: {
+    "groupKey": [{
+      employeeCode: "NV123",
+      createdAt: 1726653600000,
+      ids: { answerId: "ans123", requestId: "req123" },
+      message: "Câu hỏi",
+      modelCode: "gpt"
+    }]
+  },
+  successStarted: { "msg123": 1726653600000 },
+  monitorProcessed: { "msg123": 1726653600000 }
+}
+```
+
+### Server Storage (Vercel /tmp)
+```
+/tmp/oneai_data/
+├── NV123/
+│   ├── 2025-09.json
+│   ├── 2025-08.json
+│   └── ...
+└── NV456/
+    ├── 2025-09.json
+    └── ...
+```
+
+**Format file JSON:**
+```json
+{
+  "stats": {
+    "2025-09-18": 5,
+    "2025-09-17": 3
+  },
+  "history": {
+    "2025-09-18": [
+      {
+        "timestamp": 1726653600000,
+        "messageId": "msg123",
+        "message": "Câu hỏi demo",
+        "modelCode": "gpt"
+      }
+    ]
+  }
+}
+```
+
+## 5) Merge Strategy (Đồng bộ thông minh)
+
+### Quy tắc merge
+- **Stats**: Lấy giá trị lớn hơn giữa local và remote cho mỗi ngày
+- **History**: Nối mảng local và remote (không dedupe phức tạp)
+- **Conflicts**: Local luôn được ưu tiên khi có xung đột
+
+### Code merge chính
+```javascript
+async function mergeMonthlyDataToLocal(employeeCode, period, remoteData) {
+  const store = await chrome.storage.local.get([LOCAL_KEYS.stats, LOCAL_KEYS.history]);
+  const stats = store[LOCAL_KEYS.stats] || {};
+  const history = store[LOCAL_KEYS.history] || {};
+  const userStats = stats[employeeCode] || {};
+  const userHist = history[employeeCode] || {};
+  const prefix = `${period}-`;
+
+  // Merge stats: max giữa local và remote
+  for (const [dayKey, cnt] of Object.entries(remoteData.stats || {})) {
+    if (String(dayKey).startsWith(prefix)) {
+      const localCnt = Number(userStats[dayKey] || 0);
+      userStats[dayKey] = Math.max(localCnt, Number(cnt || 0));
+    }
+  }
+  
+  // Merge history: concat arrays
+  for (const [dayKey, list] of Object.entries(remoteData.history || {})) {
+    if (String(dayKey).startsWith(prefix)) {
+      const localList = Array.isArray(userHist[dayKey]) ? userHist[dayKey] : [];
+      const remoteList = Array.isArray(list) ? list : [];
+      userHist[dayKey] = [...localList, ...remoteList];
+    }
+  }
+}
+```
+
+## 6) Luật lọc hợp lệ câu hỏi
+
+Một câu hỏi bị coi là **KHÔNG hợp lệ** chỉ khi đồng thời:
 - Số từ < `wordMinThreshold` (mặc định 5)
-- Và chứa ít nhất một cụm trong `blockedKeywords` (mặc định: `cảm ơn`, `xin chào`, `tạm biệt`)
+- Và chứa ít nhất một cụm trong `blockedKeywords`
 
-Hợp lệ → được ghi nhận khi có monitor bước 2.
+## 7) UI Features
 
-### 5) Cài đặt (Options) và giá trị mặc định
-DEFAULT_SETTINGS (tham khảo `background.js`/`options.js`):
-- `wordMinThreshold`: 5
-- `blockedKeywords`: ['cảm ơn','xin chào','tạm biệt']
-- `alertsEnabled`: true
-- `dailyGoal`: 6 (background) | 5 (UI có thể hiển thị/ghi khác; nên đồng bộ khi cần)
-- `reminderTimes`: ['10:00','14:00','16:00','17:00'] (danh sách HH:MM)
+### Popup Calendar
+- **Lazy Loading**: Tự động fetch dữ liệu tháng nếu chưa có local
+- **Color coding**: 
+  - `goal` (xanh): Đạt chỉ tiêu
+  - `below` (đỏ): Chưa đạt
+  - `na` (xám): Không có dữ liệu
+- **Export**: Xuất lịch sử ngày thành HTML
 
-Migration: hỗ trợ tự động chuyển `reminderHour`/`reminderHours` sang `reminderTimes` khi người dùng đang có cấu hình cũ.
+### Options Page
+- Cấu hình `dailyGoal`, `reminderTimes`
+- Điều chỉnh bộ lọc: `wordMinThreshold`, `blockedKeywords`
 
-### 6) Badge & Notifications
-- Badge: hiển thị số lần của ngày hiện tại cho `currentEmployeeCode`. Màu nền: xanh khi đạt chỉ tiêu (`dailyGoal`), đỏ khi chưa.
-- Nhắc nhở: nếu `alertsEnabled` và giờ:phút hiện tại trùng một mốc trong `reminderTimes`, sẽ kiểm tra số lần hôm nay; nếu < `dailyGoal`, hiển thị thông báo. Click thông báo mở `ONEAI_CHAT_URL`.
+## 8) API Security
 
-### 7) UI Popup (lịch theo tháng)
-- Lưới thứ 2 → CN. Highlight cuối tuần, Today.
-- Mỗi ô ngày hiển thị tổng count và trạng thái: `goal` (đạt), `below` (chưa), `na` (0 nhưng không thuộc trường hợp cần cảnh báo ở quá khứ ngày làm việc).
-- Nhấn vào số sẽ hiển thị panel lịch sử ngày ở dưới: giờ, model, nội dung câu hỏi (có clamp/"Xem thêm").
-- Toolbar: chuyển tháng trước/sau, quay về tháng hiện tại; nút xóa lịch sử cho tháng quá khứ.
-- Nút Export: xuất lịch sử ngày hiện tại sang file HTML tự chứa, có style.
+### Authentication
+- **Method**: Shared secret trong header `X-Auth-Token`
+- **Key**: `b75d8f44f4d54d1abf1d8fc3d1e0b9a3`
+- **⚠️ Security Note**: Key nằm client-side, có thể bị lộ. Chỉ dùng demo/non-critical.
 
-### 8) Options Page
-- Bật/tắt cảnh báo, đặt `dailyGoal`.
-- Nhập nhiều mốc `reminderTimes` dạng linh hoạt: `HH:MM`, `H:MM`, `HHhMM`, `HHh`, `HH`.
-- Đặt `wordMinThreshold`, danh sách `blockedKeywords` (mỗi dòng một mục).
+### CORS Configuration
+```javascript
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Auth-Token');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  if (req.method === 'OPTIONS') return res.status(204).end();
+  next();
+});
+```
 
-### 9) Xử lý ID và tránh đếm lặp
-- Chìa khóa liên kết là `messageId` (từ monitor) + `answerMessageId`/`messageId` (từ streaming).
-- Group key được tạo từ cặp ID đã sắp xếp, cho phép ghép khi chỉ có một trong hai ID ở một bước.
-- `monitorProcessed` (session) chặn xử lý lặp nếu có nhiều request monitor cho cùng `messageId` trong 10 phút.
+## 9) Deployment & URLs
 
-### 10) Edge cases & giới hạn
-- Nếu popup/option đóng/mở không ảnh hưởng ghi nhận vì logic ở background.
-- Nếu notification API lỗi (thiếu icon, giới hạn nền tảng), lỗi được bỏ qua an toàn.
-- Nếu người dùng đổi `currentEmployeeCode` theo lần dùng mới, badge sẽ theo nhân viên mới nhất có hoạt động.
-- Trường hợp không tìm thấy dữ liệu cho ngày/nhân viên → UI hiển thị "Không có bản ghi.".
+### Vercel Deployment
+- **Production URL**: `https://one-ai-extension.vercel.app`
+- **API Endpoints**: `/api/data/:employeeCode?period=YYYY-MM`
+- **Test Page**: `/` (root)
+- **Environment**: `API_SECRET_KEY` set trong Vercel UI
 
-### 11) Kiểm thử nhanh
-1. Load unpacked thư mục dự án trong `chrome://extensions` (Dev mode).
-2. Mở `https://misajsc.amis.vn/oneai`.
-3. Thử các kịch bản:
-   - Câu hỏi rất ngắn và chứa từ khóa chặn → không ghi nhận.
-   - Câu hỏi ngắn nhưng không chứa từ khóa chặn → ghi nhận khi có monitor.
-   - Câu hỏi dài hợp lệ → ghi nhận khi có monitor.
-   - Kiểm tra badge đổi màu/đếm.
-   - Thay đổi `reminderTimes`, `dailyGoal`, `wordMinThreshold`, `blockedKeywords` trong Options rồi thử lại.
-   - Kiểm tra Export lịch sử ngày.
+### URL Cố định
+- Domain alias: `one-ai-extension.vercel.app` 
+- Không thay đổi khi redeploy API
+- Extension config trỏ vào URL cố định này
 
-### 12) Bảo mật & Riêng tư
-- Dữ liệu lưu cục bộ (`chrome.storage.local/session`), không gửi ra ngoài.
-- Lịch sử gồm: thời điểm, `messageId`, `message` (câu hỏi), `modelCode` — cân nhắc người dùng tự chịu trách nhiệm nội dung lưu trên máy.
+## 10) Version History
 
-### 13) Debug & Bảo trì
-- Mở DevTools của service worker (chrome://extensions → background của tiện ích) để xem `console.log` và network listeners.
-- Kiểm tra `storage.local/session` bằng `chrome.storage` trong DevTools để xác thực lược đồ.
+### v1.0.0 (Base)
+- Tracking cơ bản với local storage
+- Calendar UI và options
+- Notification system
 
-### 14) Đóng gói
-- Đảm bảo `manifest.json` và icon đầy đủ; nén toàn bộ thư mục (trừ tệp tạm/thư mục build ngoài).
-- Nếu phát hành công khai: bổ sung/chỉnh sửa `PRIVACY_POLICY.md`, mô tả cửa hàng, ảnh chụp màn hình và tài sản đồ họa theo yêu cầu.
+### v1.1.0 (API Sync)
+- Thêm đồng bộ với Vercel API
+- Lazy loading dữ liệu tháng cũ
+- Auto sync sau mỗi lần sử dụng
 
+### v1.1.2 (CORS Fix)
+- Fix CORS cho Chrome Extension
+- URL cố định với Vercel alias
+- Production ready build
 
+## 11) Development Workflow
+
+### API Development
+```bash
+cd oneai-api
+vercel dev          # Local development
+vercel --prod --yes # Production deployment
+```
+
+### Extension Development
+1. Load unpacked từ `oneai-extension/`
+2. Test trên `https://misajsc.amis.vn/oneai`
+3. Check DevTools service worker logs
+4. Verify API calls trong Network tab
+
+### Build & Package
+```bash
+# Build extension ZIP
+Compress-Archive -Path "oneai-extension\*" -DestinationPath "oneai-extension-v1.1.2-final.zip" -Force
+```
+
+## 12) Troubleshooting
+
+### Common Issues
+1. **CORS Error**: Đảm bảo domain trong config.js khớp với production URL
+2. **API 401**: Kiểm tra `API_SECRET_KEY` trong environment variables
+3. **Data không sync**: Check network tab, verify endpoints
+
+### Debug Endpoints
+- **Health**: `/api/health` - API status
+- **Debug**: `/api/debug` - Environment variables check
+- **Test Page**: `/` - Manual API testing
+
+## 13) Security Considerations
+
+### Data Privacy
+- Dữ liệu lưu local + server (Vercel /tmp)
+- Message content được lưu trong lịch sử
+- User tự chịu trách nhiệm về nội dung
+
+### API Security
+- Shared secret (có thể bị lộ client-side)
+- Không dùng cho production critical
+- Consider JWT/OAuth cho bảo mật cao hơn
+
+## 14) Future Enhancements
+
+### Possible Improvements
+- JWT authentication thay shared secret
+- Data encryption cho sensitive content
+- Real-time sync với WebSocket
+- Multi-user dashboard
+- Analytics và reporting

@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>CORS Test</title>
+</head>
+<body>
+    <h2>OneAI API CORS Test</h2>
+    <button onclick="testHealth()">Test Health</button>
+    <button onclick="testAPI()">Test API</button>
+    <button onclick="testDebug()">Test Debug</button>
+    <pre id="result"></pre>
+
+    <script>
+        const API_BASE = 'https://one-ai-extension.vercel.app';
+        const API_TOKEN = 'b75d8f44f4d54d1abf1d8fc3d1e0b9a3';
+        
+        function log(msg) {
+            document.getElementById('result').textContent += msg + '\n';
+        }
+        
+        async function testHealth() {
+            log('Testing /api/health...');
+            try {
+                const res = await fetch(`${API_BASE}/api/health`);
+                log(`Status: ${res.status}`);
+                log(`CORS Headers: ${res.headers.get('Access-Control-Allow-Origin')}`);
+                const data = await res.text();
+                log(`Response: ${data}`);
+            } catch (err) {
+                log(`Error: ${err.message}`);
+            }
+            log('---');
+        }
+        
+        async function testAPI() {
+            log('Testing /api/data/TEST...');
+            try {
+                const res = await fetch(`${API_BASE}/api/data/TEST?period=2025-09`, {
+                    headers: { 'X-Auth-Token': API_TOKEN }
+                });
+                log(`Status: ${res.status}`);
+                log(`CORS Headers: ${res.headers.get('Access-Control-Allow-Origin')}`);
+                const data = await res.text();
+                log(`Response: ${data}`);
+            } catch (err) {
+                log(`Error: ${err.message}`);
+            }
+            log('---');
+        }
+        
+        async function testDebug() {
+            log('Testing /api/debug...');
+            try {
+                const res = await fetch(`${API_BASE}/api/debug`);
+                log(`Status: ${res.status}`);
+                log(`CORS Headers: ${res.headers.get('Access-Control-Allow-Origin')}`);
+                const data = await res.text();
+                log(`Response: ${data}`);
+            } catch (err) {
+                log(`Error: ${err.message}`);
+            }
+            log('---');
+        }
+    </script>
+</body>
+</html>

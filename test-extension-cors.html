@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Extension CORS</title>
+</head>
+<body>
+    <h2>Test Chrome Extension CORS</h2>
+    <button onclick="testCORS()">Test CORS Request</button>
+    <pre id="result"></pre>
+
+    <script>
+        async function testCORS() {
+            const result = document.getElementById('result');
+            result.textContent = 'Testing CORS...\n';
+            
+            const API_BASE = 'https://one-ai-extension.vercel.app/api/data';
+            const API_TOKEN = 'b75d8f44f4d54d1abf1d8fc3d1e0b9a3';
+            
+            try {
+                // Test OPTIONS preflight first
+                result.textContent += 'Testing OPTIONS preflight...\n';
+                const optionsResponse = await fetch(`${API_BASE}/B06-0042?period=2025-09`, {
+                    method: 'OPTIONS',
+                    headers: {
+                        'X-Auth-Token': API_TOKEN,
+                        'Content-Type': 'application/json'
+                    }
+                });
+                result.textContent += `OPTIONS Status: ${optionsResponse.status}\n`;
+                result.textContent += `OPTIONS Headers: ${JSON.stringify(Object.fromEntries(optionsResponse.headers.entries()), null, 2)}\n\n`;
+                
+                // Test actual GET request
+                result.textContent += 'Testing GET request...\n';
+                const getResponse = await fetch(`${API_BASE}/B06-0042?period=2025-09`, {
+                    method: 'GET',
+                    headers: {
+                        'X-Auth-Token': API_TOKEN,
+                        'Content-Type': 'application/json'
+                    }
+                });
+                result.textContent += `GET Status: ${getResponse.status}\n`;
+                result.textContent += `GET Headers: ${JSON.stringify(Object.fromEntries(getResponse.headers.entries()), null, 2)}\n`;
+                
+                const data = await getResponse.text();
+                result.textContent += `GET Response: ${data}\n`;
+                
+            } catch (error) {
+                result.textContent += `ERROR: ${error.message}\n`;
+                console.error('CORS Test Error:', error);
+            }
+        }
+    </script>
+</body>
+</html>
